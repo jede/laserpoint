@@ -1,5 +1,4 @@
 import AppKit
-import Combine
 import SwiftUI
 
 /// A borderless floating panel that can still become the key window so the
@@ -9,14 +8,43 @@ final class SearchPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 }
 
+/// Hosting view that resizes its window to fit the SwiftUI content from within
+/// the same `layout()` pass that lays the content out. Because the frame change
+/// and the content update commit together, the window never lags the content by
+/// a frame — which is what would otherwise flicker the rounded corners. The
+/// window is anchored to a fixed top edge and grows/shrinks downward.
+private final class AutoSizingHostingView<Content: View>: NSHostingView<Content> {
+    var fixedWidth: CGFloat = 640
+    /// Returns the screen-space top edge to pin to, or nil before positioning.
+    var topEdge: (() -> CGFloat?)?
+    private var isAdjusting = false
+
+    override func layout() {
+        super.layout()
+        guard !isAdjusting, let window, let topEdgeY = topEdge?() else { return }
+        let height = fittingSize.height
+        guard height > 0 else { return }
+        let newFrame = NSRect(
+            x: window.frame.origin.x,
+            y: topEdgeY - height,
+            width: fixedWidth,
+            height: height
+        )
+        guard newFrame != window.frame else { return }
+        isAdjusting = true            // guard against the re-entrant layout setFrame triggers
+        window.setFrame(newFrame, display: true)
+        isAdjusting = false
+    }
+}
+
 /// Manages the lifecycle of the search panel: showing it centered near the top
 /// of the active screen, intercepting navigation keys, and hiding it.
 @MainActor
 final class SearchPanelController {
     private let model = SearchModel()
     private var panel: SearchPanel?
+    private var hosting: AutoSizingHostingView<SearchView>?
     private var keyMonitor: Any?
-    private var resultsObserver: AnyCancellable?
     private var launchWorkItem: DispatchWorkItem?
 
     /// How long we hold the panel open — swallowing keystrokes and showing the
@@ -28,6 +56,9 @@ final class SearchPanelController {
     /// Screen-space y of the panel's top edge. Fixed on open; the panel grows
     /// downward from here as results appear (origin is bottom-left in AppKit).
     private var topEdgeY: CGFloat = 0
+    /// Becomes true once `positionPanel` has run, so the hosting view knows the
+    /// top edge is valid and may start sizing.
+    private var isPositioned = false
 
     init() {
         model.reload()
@@ -36,12 +67,9 @@ final class SearchPanelController {
         model.onSingleMatch = { [weak self] app in
             self?.beginLaunch(app)
         }
-        // Keep the panel sized to its content as the result count changes.
-        // (Launching is reflected inline without changing size, so it doesn't
-        // trigger a resize — that avoids the panel jumping.)
-        resultsObserver = model.$results
-            .receive(on: RunLoop.main)
-            .sink { [weak self] _ in self?.resizeToFit() }
+        // The panel keeps itself sized to its content via AutoSizingHostingView's
+        // layout() pass — no separate observer needed, and resizing stays in sync
+        // with the content (no flicker).
     }
 
     var isVisible: Bool { panel?.isVisible ?? false }
@@ -123,12 +151,17 @@ final class SearchPanelController {
             onLaunch: { [weak self] in self?.launchAndHide() },
             onDismiss: { [weak self] in self?.hide() }
         )
-        let hosting = NSHostingView(rootView: root)
+        let hosting = AutoSizingHostingView(rootView: root)
         hosting.autoresizingMask = [.width, .height]
-        // Make `fittingSize` report SwiftUI's intrinsic layout so we can size
-        // the window to it. Without this a ScrollView reports a flexible size.
-        hosting.sizingOptions = [.intrinsicContentSize]
+        hosting.fixedWidth = panelWidth
+        // The hosting view sizes the window to its content (top-anchored) within
+        // its own layout pass, so the frame never lags the content by a frame.
+        hosting.topEdge = { [weak self] in
+            guard let self, self.isPositioned else { return nil }
+            return self.topEdgeY
+        }
         panel.contentView = hosting
+        self.hosting = hosting
         return panel
     }
 
@@ -137,27 +170,15 @@ final class SearchPanelController {
         let visible = screen.visibleFrame
         // Pin the top edge in the upper third; the panel grows downward.
         topEdgeY = visible.midY + visible.height * 0.30
+        isPositioned = true
 
         var frame = panel.frame
         frame.origin.x = visible.midX - panelWidth / 2
         panel.setFrame(frame, display: false)
 
-        resizeToFit()
-    }
-
-    /// Resizes the panel to fit its SwiftUI content, keeping the top edge fixed.
-    private func resizeToFit() {
-        guard let panel, let content = panel.contentView else { return }
-        content.layoutSubtreeIfNeeded()
-        let height = content.fittingSize.height
-        guard height > 0 else { return }
-        let frame = NSRect(
-            x: panel.frame.origin.x,
-            y: topEdgeY - height,
-            width: panelWidth,
-            height: height
-        )
-        panel.setFrame(frame, display: true)
+        // Trigger an immediate sizing pass now that the top edge is known.
+        hosting?.needsLayout = true
+        hosting?.layoutSubtreeIfNeeded()
     }
 
     // MARK: - Keyboard handling

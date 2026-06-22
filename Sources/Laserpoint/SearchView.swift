@@ -42,17 +42,13 @@ struct SearchView: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 12) {
-            if let app = model.launchingApp {
-                // Launching: reflect it inline so the panel never resizes/jumps.
-                Image(nsImage: app.icon)
-                    .resizable()
-                    .frame(width: 24, height: 24)
-                Text("Opening \(app.name)…")
-                    .font(.system(size: 24, weight: .light))
-                    .foregroundStyle(.secondary)
-                Spacer(minLength: 0)
-            } else {
+        // Both states are laid out at a constant 64pt and crossfade by opacity,
+        // so the container never changes size — this keeps the rounded-material
+        // clip in sync with the window frame (no corner flicker on transition).
+        ZStack(alignment: .leading) {
+            // Search state — kept mounted (faded) while launching so focus and
+            // layout stay stable.
+            HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 20, weight: .medium))
                     .foregroundStyle(.secondary)
@@ -62,6 +58,20 @@ struct SearchView: View {
                     .font(.system(size: 24, weight: .light))
                     .focused($fieldFocused)
                     .onSubmit { onLaunch() }
+            }
+            .opacity(model.launchingApp == nil ? 1 : 0)
+
+            // Launching state overlay.
+            if let app = model.launchingApp {
+                HStack(spacing: 12) {
+                    Image(nsImage: app.icon)
+                        .resizable()
+                        .frame(width: 24, height: 24)
+                    Text("Opening \(app.name)…")
+                        .font(.system(size: 24, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
             }
         }
         .padding(.horizontal, 20)
