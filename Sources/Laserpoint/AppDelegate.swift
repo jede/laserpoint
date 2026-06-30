@@ -77,7 +77,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 defer: false
             )
             window.title = "Laserpoint Settings"
-            window.contentView = NSHostingView(rootView: SettingsView())
+            let hosting = NSHostingView(rootView: SettingsView())
+            window.contentView = hosting
+            window.setContentSize(hosting.fittingSize)   // fit the SwiftUI content
             window.center()
             window.isReleasedWhenClosed = false
             settingsWindow = window
