@@ -47,10 +47,13 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 
-# Compile the Icon Composer package into the bundle. actool emits Assets.car
-# (the Liquid Glass icon used on macOS 26+) plus laserpoint.icns (the rasterized
-# fallback for macOS 14/15). Both go in Resources; Info.plist references them
-# below via CFBundleIconName / CFBundleIconFile.
+# Compile the Icon Composer package into a traditional .icns referenced by
+# CFBundleIconFile (below). We deliberately use the .icns rather than the
+# Assets.car / CFBundleIconName path: on macOS 26 Finder prefers the Assets.car
+# icon but can't render it from a read-only volume (a mounted DMG), and won't
+# fall back to the .icns — so the icon would be missing in the DMG. The .icns is
+# read directly on any volume. (--minimum-deployment-target is required: without
+# it actool fails to resolve the glyph layer and emits a background-only icon.)
 ICON_NAME="laserpoint"   # basename of the .icon package and emitted .icns
 ICON_SRC="Assets/$ICON_NAME.icon"
 if [[ -d "$ICON_SRC" ]]; then
@@ -61,6 +64,9 @@ if [[ -d "$ICON_SRC" ]]; then
         --platform macosx \
         --minimum-deployment-target 14.0 \
         --output-partial-info-plist "$(mktemp)" >/dev/null
+    # Assets.car holds the Liquid Glass icon, which we don't reference (see above)
+    # — drop it so it doesn't bloat the bundle or get preferred by Finder.
+    rm -f "$APP_DIR/Contents/Resources/Assets.car"
 else
     echo "==> No icon at $ICON_SRC, skipping"
 fi
@@ -90,8 +96,6 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleIconFile</key>
-    <string>$ICON_NAME</string>
-    <key>CFBundleIconName</key>
     <string>$ICON_NAME</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
