@@ -10,6 +10,10 @@ a few letters, and your app launches.
   cancellable confirmation so stray keystrokes don't leak through)
 - Lives in the menu bar (no Dock icon)
 
+
+<img width="864" height="632" alt="image" src="https://github.com/user-attachments/assets/fdf1fd71-b51e-4607-9614-35a0e6abfebf" />
+
+
 ## Requirements
 
 - macOS 14 (Sonoma) or later
