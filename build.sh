@@ -20,15 +20,25 @@ CMD="${1:-build}"
 
 # Release DMGs are built universal (Apple Silicon + Intel); local builds use the
 # host arch for speed.
-ARCH_FLAGS=""
+#
+# We build each arch separately with the native build system and lipo them
+# together, rather than `swift build --arch arm64 --arch x86_64`. The multi-arch
+# flag routes through Xcode's build system, which breaks on some Xcode versions
+# (duplicate-output-file / unsupported-Swift-version errors) — the per-triple
+# build avoids that and works regardless of the toolchain on the runner.
 if [[ "$CMD" == "dmg" ]]; then
-    ARCH_FLAGS="--arch arm64 --arch x86_64"
+    echo "==> swift build -c $CONFIG (universal: arm64 + x86_64)"
+    swift build -c "$CONFIG" --triple arm64-apple-macosx
+    swift build -c "$CONFIG" --triple x86_64-apple-macosx
+    ARM_BIN="$(swift build -c "$CONFIG" --triple arm64-apple-macosx --show-bin-path)/$APP_NAME"
+    X86_BIN="$(swift build -c "$CONFIG" --triple x86_64-apple-macosx --show-bin-path)/$APP_NAME"
+    BIN_PATH="$(mktemp -d)/$APP_NAME"
+    lipo -create -output "$BIN_PATH" "$ARM_BIN" "$X86_BIN"
+else
+    echo "==> swift build -c $CONFIG"
+    swift build -c "$CONFIG"
+    BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
 fi
-
-echo "==> swift build -c $CONFIG $ARCH_FLAGS"
-swift build -c "$CONFIG" $ARCH_FLAGS
-
-BIN_PATH="$(swift build -c "$CONFIG" $ARCH_FLAGS --show-bin-path)/$APP_NAME"
 
 echo "==> Assembling $APP_DIR (v$VERSION)"
 rm -rf "$APP_DIR"
