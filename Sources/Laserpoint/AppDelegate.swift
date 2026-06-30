@@ -24,10 +24,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func setupStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        item.button?.image = NSImage(
-            systemSymbolName: "scope",
-            accessibilityDescription: "Laserpoint"
-        )
+        item.button?.image = menuBarImage()
+            ?? NSImage(systemSymbolName: "scope", accessibilityDescription: "Laserpoint")
 
         let menu = NSMenu()
         menu.addItem(
@@ -44,6 +42,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         item.menu = menu
         statusItem = item
+    }
+
+    /// The menu-bar glyph, rendered as a template image so macOS tints it for
+    /// light/dark menu bars. Sized to the standard status-item height.
+    private func menuBarImage() -> NSImage? {
+        guard let url = Bundle.main.url(forResource: "menubar", withExtension: "svg"),
+              let image = NSImage(contentsOf: url), image.size.height > 0 else { return nil }
+        let height: CGFloat = 18
+        image.size = NSSize(width: height * image.size.width / image.size.height, height: height)
+        image.isTemplate = true
+        return image
     }
 
     @objc private func openLauncher() {
