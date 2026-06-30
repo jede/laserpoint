@@ -1,18 +1,19 @@
 import AppKit
-import Carbon.HIToolbox
+import KeyboardShortcuts
+import SwiftUI
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var hotKey: HotKey?
     private var panelController: SearchPanelController?
     private var statusItem: NSStatusItem?
+    private var settingsWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let controller = SearchPanelController()
         panelController = controller
 
-        // ⌥Space toggles the launcher.
-        hotKey = HotKey(keyCode: kVK_Space, modifiers: optionKey) { [weak controller] in
+        // Global hotkey (default ⌥Space, user-rebindable in Settings).
+        KeyboardShortcuts.onKeyDown(for: .toggleLauncher) { [weak controller] in
             controller?.toggle()
         }
 
@@ -29,9 +30,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let menu = NSMenu()
         menu.addItem(
-            withTitle: "Open Laserpoint  (⌥Space)",
+            withTitle: "Open Laserpoint",
             action: #selector(openLauncher),
             keyEquivalent: ""
+        ).target = self
+        menu.addItem(
+            withTitle: "Settings…",
+            action: #selector(openSettings),
+            keyEquivalent: ","
         ).target = self
         menu.addItem(.separator())
         menu.addItem(
@@ -57,6 +63,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func openLauncher() {
         panelController?.show()
+    }
+
+    @objc private func openSettings() {
+        // Hide the launcher panel so it doesn't sit above the settings window.
+        panelController?.hide()
+
+        if settingsWindow == nil {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 380, height: 140),
+                styleMask: [.titled, .closable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Laserpoint Settings"
+            window.contentView = NSHostingView(rootView: SettingsView())
+            window.center()
+            window.isReleasedWhenClosed = false
+            settingsWindow = window
+        }
+
+        NSApp.activate(ignoringOtherApps: true)
+        settingsWindow?.makeKeyAndOrderFront(nil)
     }
 
     @objc private func quit() {

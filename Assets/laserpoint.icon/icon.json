@@ -1,20 +1,18 @@
 {
   "fill" : {
-    "automatic-gradient" : "display-p3:0.92092,0.36676,0.34598,1.00000"
+    "automatic-gradient" : "display-p3:0.79381,0.13253,0.28351,1.00000"
   },
   "groups" : [
     {
       "layers" : [
         {
-          "blend-mode" : "lighten",
-          "image-name" : "laserpoint 3.svg",
-          "name" : "laserpoint 3",
-          "opacity" : 0.9,
+          "image-name" : "laserpoint 4.svg",
+          "name" : "laserpoint 4",
           "position" : {
             "scale" : 1,
             "translation-in-points" : [
-              58.703125,
-              0.06000000000005912
+              0,
+              70
             ]
           }
         }
