@@ -21,6 +21,14 @@ let package = Package(
             swiftSettings: [
                 .swiftLanguageMode(.v5)
             ]
+        ),
+        .testTarget(
+            name: "LaserpointTests",
+            dependencies: ["Laserpoint"],
+            path: "Tests/LaserpointTests",
+            swiftSettings: [
+                .swiftLanguageMode(.v5)
+            ]
         )
     ]
 )

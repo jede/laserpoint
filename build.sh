@@ -30,14 +30,18 @@ if [[ "$CMD" == "dmg" ]]; then
     echo "==> swift build -c $CONFIG (universal: arm64 + x86_64)"
     swift build -c "$CONFIG" --triple arm64-apple-macosx
     swift build -c "$CONFIG" --triple x86_64-apple-macosx
-    ARM_BIN="$(swift build -c "$CONFIG" --triple arm64-apple-macosx --show-bin-path)/$APP_NAME"
+    # Resource bundles (e.g. KeyboardShortcuts' localizations) are
+    # architecture-independent, so take them from either per-triple bin path.
+    RES_BIN="$(swift build -c "$CONFIG" --triple arm64-apple-macosx --show-bin-path)"
+    ARM_BIN="$RES_BIN/$APP_NAME"
     X86_BIN="$(swift build -c "$CONFIG" --triple x86_64-apple-macosx --show-bin-path)/$APP_NAME"
     BIN_PATH="$(mktemp -d)/$APP_NAME"
     lipo -create -output "$BIN_PATH" "$ARM_BIN" "$X86_BIN"
 else
     echo "==> swift build -c $CONFIG"
     swift build -c "$CONFIG"
-    BIN_PATH="$(swift build -c "$CONFIG" --show-bin-path)/$APP_NAME"
+    RES_BIN="$(swift build -c "$CONFIG" --show-bin-path)"
+    BIN_PATH="$RES_BIN/$APP_NAME"
 fi
 
 echo "==> Assembling $APP_DIR (v$VERSION)"
@@ -47,28 +51,45 @@ mkdir -p "$APP_DIR/Contents/Resources"
 
 cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 
-# Compile the Icon Composer package into a traditional .icns referenced by
-# CFBundleIconFile (below). We deliberately use the .icns rather than the
-# Assets.car / CFBundleIconName path: on macOS 26 Finder prefers the Assets.car
-# icon but can't render it from a read-only volume (a mounted DMG), and won't
-# fall back to the .icns — so the icon would be missing in the DMG. The .icns is
-# read directly on any volume. (--minimum-deployment-target is required: without
-# it actool fails to resolve the glyph layer and emits a background-only icon.)
+# Copy SwiftPM-generated resource bundles (e.g.
+# KeyboardShortcuts_KeyboardShortcuts.bundle, which holds its localizations).
+# Without these, `Bundle.module` traps at runtime — the KeyboardShortcuts
+# recorder in Settings crashes the app on open.
+shopt -s nullglob
+for bundle in "$RES_BIN"/*.bundle; do
+    echo "==> Bundling resources: $(basename "$bundle")"
+    cp -R "$bundle" "$APP_DIR/Contents/Resources/"
+done
+shopt -u nullglob
+
+# Compile the Icon Composer package. actool (Xcode 26+) emits two artifacts we
+# keep both of:
+#   • Assets.car — the full Liquid Glass icon, referenced by CFBundleIconName.
+#     This is what renders at high resolution with specular lighting/translucency
+#     on macOS 26+ once the app is installed on a read-write volume.
+#   • laserpoint.icns — a flat fallback (max 256px) referenced by CFBundleIconFile
+#     for older macOS, and for the read-only DMG installer volume, where Finder
+#     can't render the Assets.car Liquid Glass icon.
+# --minimum-deployment-target 26.0 is required to emit the Liquid Glass Assets.car
+# (and is required at all, else actool fails to resolve the glyph layer).
 ICON_NAME="laserpoint"   # basename of the .icon package and emitted .icns
 ICON_SRC="Assets/$ICON_NAME.icon"
 if [[ -d "$ICON_SRC" ]]; then
-    echo "==> Compiling app icon"
+    echo "==> Compiling app icon (Liquid Glass)"
     xcrun actool "$ICON_SRC" \
         --compile "$APP_DIR/Contents/Resources" \
         --app-icon "$ICON_NAME" \
+        --include-all-app-icons \
         --platform macosx \
-        --minimum-deployment-target 14.0 \
+        --minimum-deployment-target 26.0 \
         --output-partial-info-plist "$(mktemp)" >/dev/null
-    # Assets.car holds the Liquid Glass icon, which we don't reference (see above)
-    # — drop it so it doesn't bloat the bundle or get preferred by Finder.
-    rm -f "$APP_DIR/Contents/Resources/Assets.car"
-    # Fail loudly if actool didn't emit the .icns (older Xcode/actool emits only
-    # Assets.car) — otherwise we'd silently ship a bundle with no icon.
+    # Fail loudly if actool didn't emit both artifacts (older Xcode/actool emits
+    # only one, or none) — otherwise we'd silently ship a bundle with a missing
+    # or degraded icon.
+    if [[ ! -f "$APP_DIR/Contents/Resources/Assets.car" ]]; then
+        echo "error: actool did not produce Assets.car (needs Xcode 26+)" >&2
+        exit 1
+    fi
     if [[ ! -f "$APP_DIR/Contents/Resources/$ICON_NAME.icns" ]]; then
         echo "error: actool did not produce $ICON_NAME.icns (needs Xcode 26+)" >&2
         exit 1
@@ -103,6 +124,8 @@ cat > "$APP_DIR/Contents/Info.plist" <<PLIST
     <string>APPL</string>
     <key>CFBundleIconFile</key>
     <string>$ICON_NAME</string>
+    <key>CFBundleIconName</key>
+    <string>$ICON_NAME</string>
     <key>LSMinimumSystemVersion</key>
     <string>14.0</string>
     <key>LSUIElement</key>
@@ -130,13 +153,36 @@ case "$CMD" in
     dmg)
         DMG="$APP_NAME-$VERSION.dmg"
         echo "==> Creating $DMG"
-        STAGING="$(mktemp -d)"
-        cp -R "$APP_DIR" "$STAGING/"
-        ln -s /Applications "$STAGING/Applications"   # drag-to-install target
+
+        # dmgbuild lays out the installer window (background + icon positions) by
+        # writing the .DS_Store itself — no Finder/AppleScript, so it needs no
+        # Automation permission and works headless in CI. Run it from a venv
+        # since the system Python is externally managed (PEP 668).
+        VENV=".build/dmg-venv"
+        if [[ ! -x "$VENV/bin/dmgbuild" ]]; then
+            echo "==> Setting up dmgbuild"
+            python3 -m venv "$VENV"
+            "$VENV/bin/pip" install --quiet --disable-pip-version-check dmgbuild
+        fi
+
+        # Icon positions must match the arrow in Assets/dmg-background.tiff (see
+        # Assets/make-dmg-background.swift).
+        SETTINGS="$(mktemp).py"
+        cat > "$SETTINGS" <<PYEOF
+app = "$APP_DIR"
+files = [app]
+symlinks = {"Applications": "/Applications"}
+icon_locations = {app: (170, 220), "Applications": (470, 220)}
+background = "Assets/dmg-background.tiff"
+window_rect = ((200, 120), (640, 420))
+default_view = "icon-view"
+icon_size = 128
+format = "UDZO"
+PYEOF
+
         rm -f "$DMG"
-        hdiutil create -volname "$APP_NAME" -srcfolder "$STAGING" \
-            -ov -format UDZO "$DMG" >/dev/null
-        rm -rf "$STAGING"
+        "$VENV/bin/dmgbuild" -s "$SETTINGS" "$APP_NAME" "$DMG" >/dev/null
+        rm -f "$SETTINGS"
         echo "==> Built $DMG"
         ;;
 esac
