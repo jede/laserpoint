@@ -8,7 +8,7 @@ final class SearchModel: ObservableObject {
     @Published var query: String = "" {
         didSet { recompute() }
     }
-    @Published private(set) var results: [AppEntry] = []
+    @Published private(set) var results: [SearchResult] = []
     @Published var selection: Int = 0
 
     /// Non-nil while a launch is pending (during the grace window). Drives the
@@ -64,17 +64,26 @@ final class SearchModel: ObservableObject {
 
         let now = Date()
 
+        // A prefix shortcut (e.g. `w …`, `c …`) leads the list when one matches.
+        let shortcut = QueryShortcuts
+            .result(for: trimmed, definitions: ShortcutStore.shared.definitions)
+            .map { [SearchResult.shortcut($0)] } ?? []
+
+        // Calculator actions lead the list whenever the query parses as math.
+        let calc = Calculator.actions(for: trimmed).map(SearchResult.calc)
+
+        let apps: [AppEntry]
         if trimmed.isEmpty {
             // No query: surface the most "frecent" apps first, then the rest
             // alphabetically — so common apps sit at the top of the list.
-            results = catalog.sorted { lhs, rhs in
+            apps = catalog.sorted { lhs, rhs in
                 let fl = usage.frecency(for: lhs, now: now)
                 let fr = usage.frecency(for: rhs, now: now)
                 if fl != fr { return fl > fr }
                 return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
             }
         } else {
-            results = catalog
+            apps = catalog
                 .compactMap { app -> (AppEntry, Int)? in
                     // Match against the display name and any aliases; keep the best.
                     guard let score = app.searchTerms
@@ -93,16 +102,23 @@ final class SearchModel: ObservableObject {
                 .map(\.0)
         }
 
+        results = shortcut + calc + apps.map(SearchResult.app)
+
         // Reset to the top whenever the query changes the result set.
         selection = 0
 
-        // Auto-launch when the user has typed enough to leave exactly one match.
-        // Deferred to the next runloop tick so we don't mutate UI (close the
-        // panel) while SwiftUI is still applying the text-field edit.
-        if !trimmed.isEmpty, results.count == 1, let only = results.first, suppressedQuery != trimmed {
+        // Auto-launch when the user has typed enough to leave exactly one app
+        // match — but never when a shortcut/calculator row is present, nor when
+        // the query is itself a valid expression (so "1" on the way to "1+1"
+        // doesn't fire a single digit-matching app). Deferred to the next runloop
+        // tick so we don't mutate UI while SwiftUI is still applying the edit.
+        if !trimmed.isEmpty, shortcut.isEmpty, calc.isEmpty,
+           !Calculator.isExpression(trimmed), results.count == 1,
+           case .app(let only)? = results.first, suppressedQuery != trimmed {
             DispatchQueue.main.async { [weak self] in
                 // Re-check: the user may have typed more (or cancelled) since.
-                guard let self, self.results.count == 1, self.results.first == only,
+                guard let self, self.results.count == 1,
+                      case .app(let current)? = self.results.first, current == only,
                       self.suppressedQuery != self.query.trimmingCharacters(in: .whitespaces)
                 else { return }
                 self.onSingleMatch?(only)
@@ -118,24 +134,34 @@ final class SearchModel: ObservableObject {
         selection = (selection + delta % count + count) % count
     }
 
-    /// Selects a specific app (used by mouse clicks).
-    func select(_ app: AppEntry) {
-        if let index = results.firstIndex(of: app) {
+    /// Selects a specific result (used by mouse clicks).
+    func select(_ result: SearchResult) {
+        if let index = results.firstIndex(where: { $0.id == result.id }) {
             selection = index
         }
     }
 
-    var selectedApp: AppEntry? {
+    var selectedResult: SearchResult? {
         guard results.indices.contains(selection) else { return nil }
         return results[selection]
     }
 
-    /// Launches the currently selected app. Returns true on success.
+    /// Commits the currently selected result. Returns true on success.
     @discardableResult
-    func launchSelected() -> Bool {
-        guard let app = selectedApp else { return false }
-        launch(app)
+    func commitSelected() -> Bool {
+        guard let result = selectedResult else { return false }
+        commit(result)
         return true
+    }
+
+    /// Performs a result's action: open a shortcut, run a calculator action, or
+    /// launch an app.
+    func commit(_ result: SearchResult) {
+        switch result {
+        case .shortcut(let shortcut): NSWorkspace.shared.open(shortcut.url)
+        case .calc(let calc):         perform(calc)
+        case .app(let app):           launch(app)
+        }
     }
 
     /// Launches a specific app and records the launch for frecency ranking.
@@ -144,5 +170,41 @@ final class SearchModel: ObservableObject {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = true
         NSWorkspace.shared.openApplication(at: app.url, configuration: config)
+    }
+
+    private func perform(_ calc: CalcResult) {
+        switch calc.kind {
+        case .copyAnswer:       copyToPasteboard(calc.answer)
+        case .copyExpression:   copyToPasteboard(calc.expression)
+        case .openInCalculator: openCalculator(expression: calc.expression)
+        }
+    }
+
+    private func copyToPasteboard(_ string: String) {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(string, forType: .string)
+    }
+
+    /// Opens the expression in a calculator via the `calc://` URL scheme (which a
+    /// calculator app registers to prefill the expression). Falls back to plainly
+    /// launching Calculator.app if nothing handles the scheme.
+    private func openCalculator(expression: String) {
+        // Strip whitespace so `calc://2 + 2` parses; percent-encode as a fallback
+        // for any operator the URL initializer rejects.
+        let compact = expression.replacingOccurrences(of: " ", with: "")
+        let url = URL(string: "calc://\(compact)")
+            ?? (compact.addingPercentEncoding(withAllowedCharacters: .urlHostAllowed))
+                .flatMap { URL(string: "calc://\($0)") }
+
+        if let url, NSWorkspace.shared.open(url) { return }
+
+        // No app handles calc:// — just open the system Calculator.
+        if let calculator = NSWorkspace.shared
+            .urlForApplication(withBundleIdentifier: "com.apple.calculator") {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            NSWorkspace.shared.openApplication(at: calculator, configuration: config)
+        }
     }
 }

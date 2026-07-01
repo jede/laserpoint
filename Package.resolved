@@ -1,6 +1,15 @@
 {
-  "originHash" : "99b21f22568bec0a81d21f393cd0f1231afbb70593b1fa606aba8509b6bd0e3b",
+  "originHash" : "d3b9b05171e49e0b04fbb40dbc63a6ed29b235803feb8ff99a64f132cea8c70e",
   "pins" : [
+    {
+      "identity" : "expression",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/nicklockwood/Expression",
+      "state" : {
+        "revision" : "95ffe4c352e456cede933d9910d25b9c84039d1b",
+        "version" : "0.13.9"
+      }
+    },
     {
       "identity" : "keyboardshortcuts",
       "kind" : "remoteSourceControl",

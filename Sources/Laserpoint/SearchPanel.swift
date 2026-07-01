@@ -45,6 +45,7 @@ final class SearchPanelController {
     private var panel: SearchPanel?
     private var hosting: AutoSizingHostingView<SearchView>?
     private var keyMonitor: Any?
+    private var resignObserver: Any?
     private var launchWorkItem: DispatchWorkItem?
 
     /// How long we hold the panel open — swallowing keystrokes and showing the
@@ -89,6 +90,7 @@ final class SearchPanelController {
 
         positionPanel(panel)
         installKeyMonitor()
+        installDeactivationObserver()
 
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
@@ -97,12 +99,14 @@ final class SearchPanelController {
     func hide() {
         cancelPendingLaunch()
         removeKeyMonitor()
+        removeDeactivationObserver()
         panel?.orderOut(nil)
     }
 
-    /// Immediate launch (explicit commit via Return or click).
+    /// Immediate commit (explicit action via Return or click): launches the
+    /// selected app or runs the selected calculator action, then closes.
     private func launchAndHide() {
-        model.launchSelected()
+        model.commitSelected()
         hide()
     }
 
@@ -195,6 +199,27 @@ final class SearchPanelController {
         if let keyMonitor {
             NSEvent.removeMonitor(keyMonitor)
             self.keyMonitor = nil
+        }
+    }
+
+    /// Closes the launcher as soon as the app loses focus — most notably when
+    /// the user presses ⌘Tab to switch apps, but also when they click into
+    /// another app. Mirrors how Spotlight dismisses itself.
+    private func installDeactivationObserver() {
+        guard resignObserver == nil else { return }
+        resignObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didResignActiveNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.hide() }
+        }
+    }
+
+    private func removeDeactivationObserver() {
+        if let resignObserver {
+            NotificationCenter.default.removeObserver(resignObserver)
+            self.resignObserver = nil
         }
     }
 

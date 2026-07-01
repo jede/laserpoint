@@ -79,10 +79,10 @@ struct SearchView: View {
     }
 
     private var resultsList: some View {
-        // Identify selection by the app itself, never by positional index — the
-        // LazyVStack reuses rows by `id`, so an index-based highlight desyncs
+        // Identify selection by the result itself, never by positional index —
+        // the LazyVStack reuses rows by `id`, so an index-based highlight desyncs
         // from row content when the result set changes.
-        let selectedID = model.selectedApp?.id
+        let selectedID = model.selectedResult?.id
 
         // Deterministic height: a ScrollView reports a flexible size, which
         // breaks the panel's `fittingSize`. Size it to the visible rows so the
@@ -93,12 +93,12 @@ struct SearchView: View {
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(model.results) { app in
-                        ResultRow(app: app, isSelected: app.id == selectedID)
-                            .id(app.id)
+                    ForEach(model.results) { result in
+                        ResultRow(result: result, isSelected: result.id == selectedID)
+                            .id(result.id)
                             .contentShape(Rectangle())
                             .onTapGesture {
-                                model.select(app)
+                                model.select(result)
                                 onLaunch()
                             }
                     }
@@ -106,7 +106,7 @@ struct SearchView: View {
                 .padding(listPadding)
             }
             .frame(height: listHeight)
-            .onChange(of: model.selectedApp?.id) { _, newID in
+            .onChange(of: model.selectedResult?.id) { _, newID in
                 guard let newID else { return }
                 withAnimation(.easeOut(duration: 0.12)) {
                     proxy.scrollTo(newID, anchor: .center)
@@ -117,18 +117,26 @@ struct SearchView: View {
 }
 
 private struct ResultRow: View {
-    let app: AppEntry
+    let result: SearchResult
     let isSelected: Bool
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(nsImage: app.icon)
-                .resizable()
+            icon
                 .frame(width: 32, height: 32)
 
-            Text(app.name)
-                .font(.system(size: 16))
-                .foregroundStyle(isSelected ? .white : .primary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(title)
+                    .font(.system(size: 16))
+                    .foregroundStyle(isSelected ? .white : .primary)
+
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(isSelected ? .white.opacity(0.85) : .secondary)
+                        .lineLimit(1)
+                }
+            }
 
             Spacer()
         }
@@ -138,5 +146,41 @@ private struct ResultRow: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(isSelected ? Color.accentColor : .clear)
         )
+    }
+
+    @ViewBuilder private var icon: some View {
+        switch result {
+        case .app(let app):
+            Image(nsImage: app.icon)
+                .resizable()
+        case .calc(let calc):
+            symbolIcon(calc.systemImage)
+        case .shortcut(let shortcut):
+            symbolIcon(shortcut.systemImage)
+        }
+    }
+
+    private func symbolIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .padding(4)
+            .foregroundStyle(isSelected ? .white : Color.accentColor)
+    }
+
+    private var title: String {
+        switch result {
+        case .app(let app):           return app.name
+        case .calc(let calc):         return calc.title
+        case .shortcut(let shortcut): return shortcut.title
+        }
+    }
+
+    private var subtitle: String? {
+        switch result {
+        case .app:                    return nil
+        case .calc(let calc):         return calc.subtitle
+        case .shortcut(let shortcut): return shortcut.subtitle
+        }
     }
 }
