@@ -67,6 +67,12 @@ if [[ -d "$ICON_SRC" ]]; then
     # Assets.car holds the Liquid Glass icon, which we don't reference (see above)
     # — drop it so it doesn't bloat the bundle or get preferred by Finder.
     rm -f "$APP_DIR/Contents/Resources/Assets.car"
+    # Fail loudly if actool didn't emit the .icns (older Xcode/actool emits only
+    # Assets.car) — otherwise we'd silently ship a bundle with no icon.
+    if [[ ! -f "$APP_DIR/Contents/Resources/$ICON_NAME.icns" ]]; then
+        echo "error: actool did not produce $ICON_NAME.icns (needs Xcode 26+)" >&2
+        exit 1
+    fi
 else
     echo "==> No icon at $ICON_SRC, skipping"
 fi

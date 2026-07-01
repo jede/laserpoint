@@ -11,7 +11,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: macos-15
+    # macOS 26 ships Xcode 26, whose actool emits the standalone .icns from the
+    # Icon Composer .icon package. Older runners emit only Assets.car, which
+    # build.sh drops — leaving the DMG with no app icon.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
