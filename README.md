@@ -6,6 +6,10 @@ a few letters, and your app launches.
 - **⌥Space** to summon the launcher from anywhere
 - Fuzzy search over apps in `/Applications` and `/System/Applications`
 - "Frecency" ranking — frequently/recently used apps float to the top
+- **Calculator** — type an expression (e.g. `12*8+4`) to copy the answer, copy
+  the expression, or open it in Calculator
+- **Shortcuts** — type a key + text (e.g. `w swift docs`, `c write a haiku`) to
+  web-search or open Claude; add your own in Settings
 - Auto-launch when your query narrows to a single match (with a brief,
   cancellable confirmation so stray keystrokes don't leak through)
 - Lives in the menu bar (no Dock icon)

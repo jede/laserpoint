@@ -53,14 +53,28 @@ cp "$BIN_PATH" "$APP_DIR/Contents/MacOS/$APP_NAME"
 
 # Copy SwiftPM-generated resource bundles (e.g.
 # KeyboardShortcuts_KeyboardShortcuts.bundle, which holds its localizations).
-# Without these, `Bundle.module` traps at runtime — the KeyboardShortcuts
-# recorder in Settings crashes the app on open.
+# These MUST sit at the .app root (next to Contents/), NOT in Contents/Resources:
+# SwiftPM's generated `Bundle.module` accessor resolves them relative to
+# `Bundle.main.bundleURL` (the .app itself) or an absolute build-time path. The
+# build path only exists on the machine that built it, so without the copy at the
+# .app root, `Bundle.module` traps at runtime and the KeyboardShortcuts recorder
+# crashes the app the moment Settings opens — on every other machine.
 shopt -s nullglob
-for bundle in "$RES_BIN"/*.bundle; do
-    echo "==> Bundling resources: $(basename "$bundle")"
-    cp -R "$bundle" "$APP_DIR/Contents/Resources/"
-done
+bundles=("$RES_BIN"/*.bundle)
 shopt -u nullglob
+for bundle in "${bundles[@]}"; do
+    echo "==> Bundling resources: $(basename "$bundle")"
+    cp -R "$bundle" "$APP_DIR/"
+    # SwiftPM emits these read-only; make them writable so a later
+    # `xattr -dr com.apple.quarantine` doesn't error on each file.
+    chmod -R u+w "$APP_DIR/$(basename "$bundle")"
+done
+# Hard dependency: fail loudly if the KeyboardShortcuts bundle wasn't found, so a
+# packaging regression can't silently ship a build that crashes in Settings.
+if [[ ! -d "$APP_DIR/KeyboardShortcuts_KeyboardShortcuts.bundle" ]]; then
+    echo "error: KeyboardShortcuts resource bundle not found in $RES_BIN" >&2
+    exit 1
+fi
 
 # Compile the Icon Composer package. actool (Xcode 26+) emits two artifacts we
 # keep both of:
